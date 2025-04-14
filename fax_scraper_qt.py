@@ -58,10 +58,19 @@ class ScrapingWorker(QThread):
             # 429エラー（Too Many Requests）の場合は長めに待機
             if "429" in str(e):
                 if retry_count < self.max_retries:
-                    wait_time = self.retry_delay * (2 ** (retry_count + 2))  # 通常より長い待機時間
+                    # 待機時間を具体的に設定（3分→5分→10分→20分）
+                    if retry_count == 0:
+                        wait_time = 180  # 3分
+                    elif retry_count == 1:
+                        wait_time = 300  # 5分
+                    elif retry_count == 2:
+                        wait_time = 600  # 10分
+                    else:
+                        wait_time = 1200  # 20分
+                    
                     self.log_updated.emit(f"- リクエスト制限エラー(429): {str(e)}")
-                    self.log_updated.emit(f"- より長く待機します... {wait_time}秒 ({retry_count + 1}/{self.max_retries})")
-                    time.sleep(wait_time)  # 追加で待機
+                    self.log_updated.emit(f"- {wait_time}秒（{wait_time/60}分）待機します... ({retry_count + 1}/{self.max_retries})")
+                    time.sleep(wait_time)  # 待機
                     return self.search_with_retry(query, retry_count + 1)
                 else:
                     raise Exception(f"リクエスト制限エラーが続いています: {str(e)}")
@@ -83,10 +92,19 @@ class ScrapingWorker(QThread):
         except Exception as e:
             # その他のエラーはリトライせずに例外を投げる
             if "Too Many Requests" in str(e) or "429" in str(e):
-                if retry_count < self.max_retries:
-                    wait_time = self.retry_delay * (2 ** (retry_count + 2))
+                if retry_count < self.max_retries + 2:  # 最大リトライ回数を増やす
+                    # 待機時間を具体的に設定（3分→5分→10分→20分）
+                    if retry_count == 0:
+                        wait_time = 180  # 3分
+                    elif retry_count == 1:
+                        wait_time = 300  # 5分
+                    elif retry_count == 2:
+                        wait_time = 600  # 10分
+                    else:
+                        wait_time = 1200  # 20分
+                        
                     self.log_updated.emit(f"- リクエスト制限エラー: {str(e)}")
-                    self.log_updated.emit(f"- より長く待機します... {wait_time}秒 ({retry_count + 1}/{self.max_retries})")
+                    self.log_updated.emit(f"- {wait_time}秒（{wait_time/60}分）待機します... ({retry_count + 1}/{self.max_retries + 2})")
                     time.sleep(wait_time)
                     return self.search_with_retry(query, retry_count + 1)
                 else:
