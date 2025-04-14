@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Logs
+*.log
+
+# Local development
+*.local
+
+# System Files
+.Trash/
+.npm/
+.cache/
+.ipynb_checkpoints/
+.ipython/
+.jupyter/
+.kaggle/
+.local/
+.matplotlib/
+.viminfo
+.zsh_history
+.zsh_sessions/
+
+# Large files
+*.pdf
+*.csv
+*.xlsx
+*.pptx
+*.png
+*.jpg
+*.jpeg
+*.gif 
