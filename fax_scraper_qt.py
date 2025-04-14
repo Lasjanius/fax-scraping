@@ -41,8 +41,10 @@ class ScrapingWorker(QThread):
     def search_with_retry(self, query, retry_count=0):
         """Google検索を実行し、ネットワークエラーのみリトライする"""
         try:
-            # 検索実行前に待機
-            time.sleep(3)  # 3秒待機
+            # 検索実行前に待機（リトライ回数に応じて待機時間を増加）
+            wait_time = self.retry_delay * (2 ** retry_count)  # エクスポネンシャルバックオフ
+            self.log_updated.emit(f"- 検索前に {wait_time}秒待機します...")
+            time.sleep(wait_time)
             
             # Google検索を実行
             search_results = list(search(query, num=1))
@@ -52,18 +54,45 @@ class ScrapingWorker(QThread):
             else:
                 raise Exception("検索結果が0件でした")
                 
+        except requests.exceptions.HTTPError as e:
+            # 429エラー（Too Many Requests）の場合は長めに待機
+            if "429" in str(e):
+                if retry_count < self.max_retries:
+                    wait_time = self.retry_delay * (2 ** (retry_count + 2))  # 通常より長い待機時間
+                    self.log_updated.emit(f"- リクエスト制限エラー(429): {str(e)}")
+                    self.log_updated.emit(f"- より長く待機します... {wait_time}秒 ({retry_count + 1}/{self.max_retries})")
+                    time.sleep(wait_time)  # 追加で待機
+                    return self.search_with_retry(query, retry_count + 1)
+                else:
+                    raise Exception(f"リクエスト制限エラーが続いています: {str(e)}")
+            else:
+                # その他のHTTPエラー
+                raise Exception(f"HTTPエラー: {str(e)}")
+                
         except requests.exceptions.RequestException as e:
             # ネットワークエラーのみリトライ
-            if retry_count < 2:  # 最大2回までリトライ
+            if retry_count < self.max_retries:
+                wait_time = self.retry_delay * (2 ** retry_count)
                 self.log_updated.emit(f"- ネットワークエラー: {str(e)}")
-                self.log_updated.emit(f"- リトライします... ({retry_count + 1}/2)")
+                self.log_updated.emit(f"- リトライします... {wait_time}秒後 ({retry_count + 1}/{self.max_retries})")
+                time.sleep(wait_time)  # 追加で待機
                 return self.search_with_retry(query, retry_count + 1)
             else:
                 raise Exception(f"ネットワークエラーが続いています: {str(e)}")
                 
         except Exception as e:
             # その他のエラーはリトライせずに例外を投げる
-            raise Exception(f"検索に失敗しました: {str(e)}")
+            if "Too Many Requests" in str(e) or "429" in str(e):
+                if retry_count < self.max_retries:
+                    wait_time = self.retry_delay * (2 ** (retry_count + 2))
+                    self.log_updated.emit(f"- リクエスト制限エラー: {str(e)}")
+                    self.log_updated.emit(f"- より長く待機します... {wait_time}秒 ({retry_count + 1}/{self.max_retries})")
+                    time.sleep(wait_time)
+                    return self.search_with_retry(query, retry_count + 1)
+                else:
+                    raise Exception(f"リクエスト制限エラーが続いています: {str(e)}")
+            else:
+                raise Exception(f"検索に失敗しました: {str(e)}")
 
     def run(self):
         try:
