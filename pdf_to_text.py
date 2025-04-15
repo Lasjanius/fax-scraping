@@ -50,9 +50,11 @@ def extract_fax_numbers(pdf_path, output_path=None):
                     unique_fax = list(set(matches))
                     
                     for fax in unique_fax:
+                        # ハイフンを削除して数字のみの10桁に変換
+                        clean_fax = fax.replace('-', '')
                         fax_numbers.append({
                             "page": page_num + 1,
-                            "fax_number": fax,
+                            "fax_number": clean_fax,
                             "context": get_context(text, fax)  # FAX番号の周辺テキストを取得
                         })
                         
