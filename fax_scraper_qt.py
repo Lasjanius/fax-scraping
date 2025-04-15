@@ -9,6 +9,7 @@ import csv
 import time
 import json
 import re
+import random  # ランダム機能のためにインポート
 import threading
 import pandas as pd
 import requests
@@ -35,19 +36,37 @@ class ScrapingWorker(QThread):
         super().__init__()
         self.csv_path = csv_path
         self.stop_requested = False
-        self.retry_delay = 5  # 基本待機時間（秒）
+        self.retry_delay = 15  # 基本待機時間を15秒に増加
         self.max_retries = 3  # 最大リトライ回数
+        
+        # 一般的なUser-Agentリスト
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.48'
+        ]
+
+    def get_random_user_agent(self):
+        """ランダムなUser-Agentを返す"""
+        return random.choice(self.user_agents)
 
     def search_with_retry(self, query, retry_count=0):
         """Google検索を実行し、ネットワークエラーのみリトライする"""
         try:
             # 検索実行前に待機（リトライ回数に応じて待機時間を増加）
-            wait_time = self.retry_delay * (2 ** retry_count)  # エクスポネンシャルバックオフ
-            self.log_updated.emit(f"- 検索前に {wait_time}秒待機します...")
+            wait_time = self.retry_delay * (2 ** retry_count) + random.uniform(1, 5)  # ランダム要素を追加
+            self.log_updated.emit(f"- 検索前に {wait_time:.1f}秒待機します...")
             time.sleep(wait_time)
             
             # Google検索を実行
-            search_results = list(search(query, num=1))
+            headers = {'User-Agent': self.get_random_user_agent()}
+            self.log_updated.emit(f"- ランダムなUser-Agentを使用: {headers['User-Agent'][:30]}...")
+            search_results = list(search(query, num=1, user_agent=headers['User-Agent']))
             
             if search_results:
                 return search_results
@@ -58,18 +77,11 @@ class ScrapingWorker(QThread):
             # 429エラー（Too Many Requests）の場合は長めに待機
             if "429" in str(e):
                 if retry_count < self.max_retries:
-                    # 待機時間を具体的に設定（3分→5分→10分→20分）
-                    if retry_count == 0:
-                        wait_time = 180  # 3分
-                    elif retry_count == 1:
-                        wait_time = 300  # 5分
-                    elif retry_count == 2:
-                        wait_time = 600  # 10分
-                    else:
-                        wait_time = 1200  # 20分
+                    # 待機時間を一律10分に設定
+                    wait_time = 600  # 10分
                     
                     self.log_updated.emit(f"- リクエスト制限エラー(429): {str(e)}")
-                    self.log_updated.emit(f"- {wait_time}秒（{wait_time/60}分）待機します... ({retry_count + 1}/{self.max_retries})")
+                    self.log_updated.emit(f"- {wait_time}秒（10分）待機します... ({retry_count + 1}/{self.max_retries})")
                     time.sleep(wait_time)  # 待機
                     return self.search_with_retry(query, retry_count + 1)
                 else:
@@ -93,18 +105,11 @@ class ScrapingWorker(QThread):
             # その他のエラーはリトライせずに例外を投げる
             if "Too Many Requests" in str(e) or "429" in str(e):
                 if retry_count < self.max_retries + 2:  # 最大リトライ回数を増やす
-                    # 待機時間を具体的に設定（3分→5分→10分→20分）
-                    if retry_count == 0:
-                        wait_time = 180  # 3分
-                    elif retry_count == 1:
-                        wait_time = 300  # 5分
-                    elif retry_count == 2:
-                        wait_time = 600  # 10分
-                    else:
-                        wait_time = 1200  # 20分
+                    # 待機時間を一律10分に設定
+                    wait_time = 600  # 10分
                         
                     self.log_updated.emit(f"- リクエスト制限エラー: {str(e)}")
-                    self.log_updated.emit(f"- {wait_time}秒（{wait_time/60}分）待機します... ({retry_count + 1}/{self.max_retries + 2})")
+                    self.log_updated.emit(f"- {wait_time}秒（10分）待機します... ({retry_count + 1}/{self.max_retries + 2})")
                     time.sleep(wait_time)
                     return self.search_with_retry(query, retry_count + 1)
                 else:
@@ -138,8 +143,19 @@ class ScrapingWorker(QThread):
                 df['エラー詳細'] = None
                 self.log_updated.emit("エラー詳細カラムを追加しました")
 
+            # 処理済みの件数を確認（リフレッシュの場合のために）
+            start_index = 0
+            for i, row in df.iterrows():
+                if pd.isna(df.at[i, 'FAX番号']) and pd.isna(df.at[i, 'エラー詳細']):
+                    # FAX番号もエラー詳細も空の場合は、ここから開始
+                    start_index = i
+                    break
+            
+            if start_index > 0:
+                self.log_updated.emit(f"前回の処理から再開します。開始位置: {start_index + 1}件目")
+
             # 各クリニックに対して処理
-            for index, row in df.iterrows():
+            for index, row in df.iloc[start_index:].iterrows():
                 if self.stop_requested:
                     self.log_updated.emit("処理を中断しました")
                     break
@@ -169,7 +185,10 @@ class ScrapingWorker(QThread):
                             for url in search_results:
                                 try:
                                     # ページを取得
-                                    response = requests.get(url, timeout=10)
+                                    headers = {'User-Agent': self.get_random_user_agent()}
+                                    self.log_updated.emit(f"- ページ取得にランダムなUser-Agentを使用")
+                                    response = requests.get(url, timeout=10, headers=headers)
+                                    response.raise_for_status()  # ステータスコードチェック
                                     soup = BeautifulSoup(response.text, 'html.parser')
                                     
                                     # タイトルを取得
@@ -194,257 +213,259 @@ class ScrapingWorker(QThread):
                             
                             # ウェブページを取得（タイムアウトを設定）
                             try:
-                                response = requests.get(url, timeout=10)
+                                headers = {'User-Agent': self.get_random_user_agent()}
+                                self.log_updated.emit(f"- ページ取得にランダムなUser-Agentを使用")
+                                response = requests.get(url, timeout=10, headers=headers)
                                 response.raise_for_status()  # ステータスコードチェック
                                 soup = BeautifulSoup(response.text, 'html.parser')
                                 self.log_updated.emit("- ページの取得に成功しました")
 
-                                # 詳細ページへのリンクを探す
-                                detail_links = []
+                                # トップページから直接FAX番号を探す
+                                self.log_updated.emit("- トップページからFAX番号を探します")
+                                fax_number = None
                                 
-                                # パターン1: クリニック名のリンク
-                                clinic_links = soup.find_all('a', href=re.compile(r'detail\.html\?id=\d+'))
-                                for link in clinic_links:
-                                    link_text = link.text.strip()
-                                    # クリニック名の部分一致をチェック
-                                    if any(name in link_text for name in [clinic_name, clinic_name.replace('クリニック', ''), clinic_name.replace('医院', '')]):
-                                        detail_links.append(link['href'])
-                                        self.log_updated.emit(f"- リンクを検出: {link_text}")
+                                # パターン1: FAXという文字の後ろの数字
+                                fax_patterns = soup.find_all(string=re.compile(r'FAX.*?(\d[\d\-]+\d)'))
+                                if fax_patterns:
+                                    match = re.search(r'FAX.*?(\d[\d\-]+\d)', fax_patterns[0])
+                                    if match:
+                                        fax_number = match.group(1)
+                                        self.log_updated.emit("- パターン1でFAX番号を検出")
                                 
-                                # パターン2: テーブル内のリンク
-                                if not detail_links:
+                                # パターン2: class名やid名にfaxを含む要素
+                                if not fax_number:
+                                    fax_elements = soup.find_all(class_=re.compile('fax', re.I))
+                                    fax_elements.extend(soup.find_all(id=re.compile('fax', re.I)))
+                                    for elem in fax_elements:
+                                        match = re.search(r'(\d[\d\-]+\d)', elem.text)
+                                        if match:
+                                            fax_number = match.group(1)
+                                            self.log_updated.emit("- パターン2でFAX番号を検出")
+                                            break
+                                
+                                # パターン3: dt/dd タグの組み合わせ
+                                if not fax_number:
+                                    dt_elements = soup.find_all('dt')
+                                    for dt in dt_elements:
+                                        dt_text = dt.text.strip().upper()
+                                        if 'FAX' in dt_text and not any(x in dt_text for x in ['TEL', 'PHONE', '電話']):
+                                            next_dd = dt.find_next('dd')
+                                            if next_dd:
+                                                match = re.search(r'(\d[\d\-]+\d)', next_dd.text)
+                                                if match:
+                                                    fax_number = match.group(1)
+                                                    self.log_updated.emit("- パターン3でFAX番号を検出")
+                                                    break
+                                
+                                # パターン4: テーブル内のFAX番号
+                                if not fax_number:
                                     tables = soup.find_all('table')
                                     for table in tables:
                                         rows = table.find_all('tr')
                                         for row in rows:
                                             cells = row.find_all(['td', 'th'])
-                                            for cell in cells:
-                                                links = cell.find_all('a', href=re.compile(r'detail\.html\?id=\d+'))
-                                                for link in links:
-                                                    link_text = link.text.strip()
-                                                    # クリニック名の部分一致をチェック
-                                                    if any(name in link_text for name in [clinic_name, clinic_name.replace('クリニック', ''), clinic_name.replace('医院', '')]):
-                                                        detail_links.append(link['href'])
-                                                        self.log_updated.emit(f"- テーブル内でリンクを検出: {link_text}")
-
-                                if detail_links:
-                                    # 詳細ページのURLを構築
-                                    base_url = '/'.join(url.split('/')[:-1]) + '/'
-                                    detail_url = base_url + detail_links[0]
-                                    self.log_updated.emit(f"- 詳細ページを検出: {detail_url}")
-
-                                    # 詳細ページを取得
-                                    try:
-                                        detail_response = requests.get(detail_url, timeout=10)
-                                        detail_response.raise_for_status()
-                                        detail_soup = BeautifulSoup(detail_response.text, 'html.parser')
-                                        self.log_updated.emit("- 詳細ページの取得に成功しました")
-
-                                        # FAX番号を探す
-                                        fax_number = None
-                                        
-                                        # パターン1: FAXという文字の後ろの数字
-                                        fax_patterns = detail_soup.find_all(string=re.compile(r'FAX.*?(\d[\d\-]+\d)'))
-                                        if fax_patterns:
-                                            match = re.search(r'FAX.*?(\d[\d\-]+\d)', fax_patterns[0])
-                                            if match:
-                                                fax_number = match.group(1)
-                                                self.log_updated.emit("- パターン1でFAX番号を検出")
-                                        
-                                        # パターン2: class名やid名にfaxを含む要素
-                                        if not fax_number:
-                                            fax_elements = detail_soup.find_all(class_=re.compile('fax', re.I))
-                                            fax_elements.extend(detail_soup.find_all(id=re.compile('fax', re.I)))
-                                            for elem in fax_elements:
-                                                match = re.search(r'(\d[\d\-]+\d)', elem.text)
-                                                if match:
-                                                    fax_number = match.group(1)
-                                                    self.log_updated.emit("- パターン2でFAX番号を検出")
-                                                    break
-                                        
-                                        # パターン3: dt/dd タグの組み合わせ
-                                        if not fax_number:
-                                            dt_elements = detail_soup.find_all('dt')
-                                            for dt in dt_elements:
-                                                dt_text = dt.text.strip().upper()
-                                                if 'FAX' in dt_text and not any(x in dt_text for x in ['TEL', 'PHONE', '電話']):
-                                                    next_dd = dt.find_next('dd')
-                                                    if next_dd:
-                                                        match = re.search(r'(\d[\d\-]+\d)', next_dd.text)
-                                                        if match:
-                                                            fax_number = match.group(1)
-                                                            self.log_updated.emit("- パターン3でFAX番号を検出")
-                                                            break
-                                        
-                                        # パターン4: テーブル内のFAX番号
-                                        if not fax_number:
-                                            tables = detail_soup.find_all('table')
-                                            for table in tables:
-                                                rows = table.find_all('tr')
-                                                for row in rows:
-                                                    cells = row.find_all(['td', 'th'])
-                                                    for i, cell in enumerate(cells):
-                                                        cell_text = cell.text.strip().upper()
-                                                        if ('FAX' in cell_text and not any(x in cell_text for x in ['TEL', 'PHONE', '電話']) 
-                                                            and i + 1 < len(cells)):
-                                                            match = re.search(r'(\d[\d\-]+\d)', cells[i + 1].text)
-                                                            if match:
-                                                                fax_number = match.group(1)
-                                                                self.log_updated.emit("- パターン4でFAX番号を検出")
-                                                                break
-                                                    if fax_number:
-                                                        break
-                                                if fax_number:
-                                                    break
-                                        
-                                        # パターン5: 一般的な電話番号パターン（FAXの前後）
-                                        if not fax_number:
-                                            text_blocks = detail_soup.find_all(string=re.compile(r'FAX|fax'))
-                                            for text in text_blocks:
-                                                # FAXの前後100文字を検索
-                                                context = text.parent.text
-                                                fax_index = context.upper().find('FAX')
-                                                if fax_index != -1:
-                                                    # FAXの前後を検索
-                                                    before = context[max(0, fax_index-100):fax_index]
-                                                    after = context[fax_index:min(len(context), fax_index+100)]
-                                                    # FAXの直後を優先的に検索
-                                                    match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', after)
-                                                    if not match:
-                                                        match = re.search(r'(\d[\d\-]+\d)[^\d]*FAX', before)
+                                            for i, cell in enumerate(cells):
+                                                cell_text = cell.text.strip().upper()
+                                                if ('FAX' in cell_text and not any(x in cell_text for x in ['TEL', 'PHONE', '電話']) 
+                                                    and i + 1 < len(cells)):
+                                                    match = re.search(r'(\d[\d\-]+\d)', cells[i + 1].text)
                                                     if match:
                                                         fax_number = match.group(1)
-                                                        self.log_updated.emit("- パターン5でFAX番号を検出")
+                                                        self.log_updated.emit("- パターン4でFAX番号を検出")
                                                         break
-                                        
-                                        # パターン6: 「お問い合わせ」や「連絡先」セクション内のFAX番号
-                                        if not fax_number:
-                                            contact_sections = detail_soup.find_all(['div', 'section'], class_=re.compile(r'contact|inquiry|access', re.I))
-                                            contact_sections.extend(detail_soup.find_all(['div', 'section'], id=re.compile(r'contact|inquiry|access', re.I)))
-                                            for section in contact_sections:
-                                                text = section.text
-                                                match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', text)
-                                                if match:
-                                                    fax_number = match.group(1)
-                                                    self.log_updated.emit("- パターン6でFAX番号を検出")
-                                                    break
-                                        
+                                            if fax_number:
+                                                break
                                         if fax_number:
-                                            # 番号の正規化（ハイフン統一のみ）
-                                            fax_number = re.sub(r'[^\d\-]', '', fax_number)
-                                            df.at[index, 'FAX番号'] = str(fax_number)  # 文字列として保存
-                                            df.at[index, 'エラー詳細'] = None  # エラーをクリア
-                                            self.log_updated.emit(f"- メインページでFAX番号が見つかりました: {fax_number}")
-                                        else:
-                                            df.at[index, 'エラー詳細'] = "メインページでもFAX番号が見つかりませんでした"
-                                            self.log_updated.emit("- メインページでもFAX番号が見つかりませんでした")
-                                    
-                                    except requests.exceptions.RequestException as e:
-                                        self.log_updated.emit(f"- 詳細ページの取得に失敗しました: {str(e)}")
-                                        df.at[index, 'エラー詳細'] = f"詳細ページの取得に失敗: {str(e)}"
-                                else:
-                                    df.at[index, 'エラー詳細'] = "詳細ページへのリンクが見つかりませんでした"
-                                    self.log_updated.emit("- 詳細ページへのリンクが見つかりませんでした")
-                                    # メインページから直接FAX番号を探す
-                                    self.log_updated.emit("- メインページから直接FAX番号を探します")
-                                    fax_number = None
-                                    
-                                    # パターン1: FAXという文字の後ろの数字
-                                    fax_patterns = soup.find_all(string=re.compile(r'FAX.*?(\d[\d\-]+\d)'))
-                                    if fax_patterns:
-                                        match = re.search(r'FAX.*?(\d[\d\-]+\d)', fax_patterns[0])
+                                            break
+                                
+                                # パターン5: 一般的な電話番号パターン（FAXの前後）
+                                if not fax_number:
+                                    text_blocks = soup.find_all(string=re.compile(r'FAX|fax'))
+                                    for text in text_blocks:
+                                        # FAXの前後100文字を検索
+                                        context = text.parent.text
+                                        fax_index = context.upper().find('FAX')
+                                        if fax_index != -1:
+                                            # FAXの前後を検索
+                                            before = context[max(0, fax_index-100):fax_index]
+                                            after = context[fax_index:min(len(context), fax_index+100)]
+                                            # FAXの直後を優先的に検索
+                                            match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', after)
+                                            if not match:
+                                                match = re.search(r'(\d[\d\-]+\d)[^\d]*FAX', before)
+                                            if match:
+                                                fax_number = match.group(1)
+                                                self.log_updated.emit("- パターン5でFAX番号を検出")
+                                                break
+                                
+                                # パターン6: 「お問い合わせ」や「連絡先」セクション内のFAX番号
+                                if not fax_number:
+                                    contact_sections = soup.find_all(['div', 'section'], class_=re.compile(r'contact|inquiry|access', re.I))
+                                    contact_sections.extend(soup.find_all(['div', 'section'], id=re.compile(r'contact|inquiry|access', re.I)))
+                                    for section in contact_sections:
+                                        text = section.text
+                                        match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', text)
                                         if match:
                                             fax_number = match.group(1)
-                                            self.log_updated.emit("- パターン1でFAX番号を検出")
+                                            self.log_updated.emit("- パターン6でFAX番号を検出")
+                                            break
+                                
+                                if fax_number:
+                                    # 番号の正規化（ハイフン統一のみ）
+                                    fax_number = re.sub(r'[^\d\-]', '', fax_number)
+                                    df.at[index, 'FAX番号'] = str(fax_number)  # 文字列として保存
+                                    df.at[index, 'エラー詳細'] = None  # エラーをクリア
+                                    self.log_updated.emit(f"- トップページでFAX番号が見つかりました: {fax_number}")
+                                else:
+                                    # 詳細ページへのリンクを探す
+                                    self.log_updated.emit("- トップページでFAX番号が見つかりませんでした。詳細ページを探します")
+                                    detail_links = []
                                     
-                                    # パターン2: class名やid名にfaxを含む要素
-                                    if not fax_number:
-                                        fax_elements = soup.find_all(class_=re.compile('fax', re.I))
-                                        fax_elements.extend(soup.find_all(id=re.compile('fax', re.I)))
-                                        for elem in fax_elements:
-                                            match = re.search(r'(\d[\d\-]+\d)', elem.text)
-                                            if match:
-                                                fax_number = match.group(1)
-                                                self.log_updated.emit("- パターン2でFAX番号を検出")
-                                                break
+                                    # パターン1: クリニック名のリンク
+                                    clinic_links = soup.find_all('a', href=re.compile(r'detail\.html\?id=\d+'))
+                                    for link in clinic_links:
+                                        link_text = link.text.strip()
+                                        # クリニック名の部分一致をチェック
+                                        if any(name in link_text for name in [clinic_name, clinic_name.replace('クリニック', ''), clinic_name.replace('医院', '')]):
+                                            detail_links.append(link['href'])
+                                            self.log_updated.emit(f"- リンクを検出: {link_text}")
                                     
-                                    # パターン3: dt/dd タグの組み合わせ
-                                    if not fax_number:
-                                        dt_elements = soup.find_all('dt')
-                                        for dt in dt_elements:
-                                            dt_text = dt.text.strip().upper()
-                                            if 'FAX' in dt_text and not any(x in dt_text for x in ['TEL', 'PHONE', '電話']):
-                                                next_dd = dt.find_next('dd')
-                                                if next_dd:
-                                                    match = re.search(r'(\d[\d\-]+\d)', next_dd.text)
-                                                    if match:
-                                                        fax_number = match.group(1)
-                                                        self.log_updated.emit("- パターン3でFAX番号を検出")
-                                                        break
-                                    
-                                    # パターン4: テーブル内のFAX番号
-                                    if not fax_number:
+                                    # パターン2: テーブル内のリンク
+                                    if not detail_links:
                                         tables = soup.find_all('table')
                                         for table in tables:
                                             rows = table.find_all('tr')
                                             for row in rows:
                                                 cells = row.find_all(['td', 'th'])
-                                                for i, cell in enumerate(cells):
-                                                    cell_text = cell.text.strip().upper()
-                                                    if ('FAX' in cell_text and not any(x in cell_text for x in ['TEL', 'PHONE', '電話']) 
-                                                        and i + 1 < len(cells)):
-                                                        match = re.search(r'(\d[\d\-]+\d)', cells[i + 1].text)
-                                                        if match:
-                                                            fax_number = match.group(1)
-                                                            self.log_updated.emit("- パターン4でFAX番号を検出")
+                                                for cell in cells:
+                                                    links = cell.find_all('a', href=re.compile(r'detail\.html\?id=\d+'))
+                                                    for link in links:
+                                                        link_text = link.text.strip()
+                                                        # クリニック名の部分一致をチェック
+                                                        if any(name in link_text for name in [clinic_name, clinic_name.replace('クリニック', ''), clinic_name.replace('医院', '')]):
+                                                            detail_links.append(link['href'])
+                                                            self.log_updated.emit(f"- テーブル内でリンクを検出: {link_text}")
+
+                                    if detail_links:
+                                        # 詳細ページのURLを構築
+                                        base_url = '/'.join(url.split('/')[:-1]) + '/'
+                                        detail_url = base_url + detail_links[0]
+                                        self.log_updated.emit(f"- 詳細ページを検出: {detail_url}")
+
+                                        # 詳細ページを取得
+                                        try:
+                                            headers = {'User-Agent': self.get_random_user_agent()}
+                                            detail_response = requests.get(detail_url, timeout=10, headers=headers)
+                                            detail_response.raise_for_status()
+                                            detail_soup = BeautifulSoup(detail_response.text, 'html.parser')
+                                            self.log_updated.emit("- 詳細ページの取得に成功しました")
+
+                                            # FAX番号を探す
+                                            fax_number = None
+                                            
+                                            # パターン1: FAXという文字の後ろの数字
+                                            fax_patterns = detail_soup.find_all(string=re.compile(r'FAX.*?(\d[\d\-]+\d)'))
+                                            if fax_patterns:
+                                                match = re.search(r'FAX.*?(\d[\d\-]+\d)', fax_patterns[0])
+                                                if match:
+                                                    fax_number = match.group(1)
+                                                    self.log_updated.emit("- パターン1でFAX番号を検出")
+                                            
+                                            # パターン2: class名やid名にfaxを含む要素
+                                            if not fax_number:
+                                                fax_elements = detail_soup.find_all(class_=re.compile('fax', re.I))
+                                                fax_elements.extend(detail_soup.find_all(id=re.compile('fax', re.I)))
+                                                for elem in fax_elements:
+                                                    match = re.search(r'(\d[\d\-]+\d)', elem.text)
+                                                    if match:
+                                                        fax_number = match.group(1)
+                                                        self.log_updated.emit("- パターン2でFAX番号を検出")
+                                                        break
+                                            
+                                            # パターン3: dt/dd タグの組み合わせ
+                                            if not fax_number:
+                                                dt_elements = detail_soup.find_all('dt')
+                                                for dt in dt_elements:
+                                                    dt_text = dt.text.strip().upper()
+                                                    if 'FAX' in dt_text and not any(x in dt_text for x in ['TEL', 'PHONE', '電話']):
+                                                        next_dd = dt.find_next('dd')
+                                                        if next_dd:
+                                                            match = re.search(r'(\d[\d\-]+\d)', next_dd.text)
+                                                            if match:
+                                                                fax_number = match.group(1)
+                                                                self.log_updated.emit("- パターン3でFAX番号を検出")
+                                                                break
+                                            
+                                            # パターン4: テーブル内のFAX番号
+                                            if not fax_number:
+                                                tables = detail_soup.find_all('table')
+                                                for table in tables:
+                                                    rows = table.find_all('tr')
+                                                    for row in rows:
+                                                        cells = row.find_all(['td', 'th'])
+                                                        for i, cell in enumerate(cells):
+                                                            cell_text = cell.text.strip().upper()
+                                                            if ('FAX' in cell_text and not any(x in cell_text for x in ['TEL', 'PHONE', '電話']) 
+                                                                and i + 1 < len(cells)):
+                                                                match = re.search(r'(\d[\d\-]+\d)', cells[i + 1].text)
+                                                                if match:
+                                                                    fax_number = match.group(1)
+                                                                    self.log_updated.emit("- パターン4でFAX番号を検出")
+                                                                    break
+                                                        if fax_number:
                                                             break
                                                     if fax_number:
                                                         break
+                                            
+                                            # パターン5: 一般的な電話番号パターン（FAXの前後）
+                                            if not fax_number:
+                                                text_blocks = detail_soup.find_all(string=re.compile(r'FAX|fax'))
+                                                for text in text_blocks:
+                                                    # FAXの前後100文字を検索
+                                                    context = text.parent.text
+                                                    fax_index = context.upper().find('FAX')
+                                                    if fax_index != -1:
+                                                        # FAXの前後を検索
+                                                        before = context[max(0, fax_index-100):fax_index]
+                                                        after = context[fax_index:min(len(context), fax_index+100)]
+                                                        # FAXの直後を優先的に検索
+                                                        match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', after)
+                                                        if not match:
+                                                            match = re.search(r'(\d[\d\-]+\d)[^\d]*FAX', before)
+                                                        if match:
+                                                            fax_number = match.group(1)
+                                                            self.log_updated.emit("- パターン5でFAX番号を検出")
+                                                            break
+                                            
+                                            # パターン6: 「お問い合わせ」や「連絡先」セクション内のFAX番号
+                                            if not fax_number:
+                                                contact_sections = detail_soup.find_all(['div', 'section'], class_=re.compile(r'contact|inquiry|access', re.I))
+                                                contact_sections.extend(detail_soup.find_all(['div', 'section'], id=re.compile(r'contact|inquiry|access', re.I)))
+                                                for section in contact_sections:
+                                                    text = section.text
+                                                    match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', text)
+                                                    if match:
+                                                        fax_number = match.group(1)
+                                                        self.log_updated.emit("- パターン6でFAX番号を検出")
+                                                        break
+                                            
                                             if fax_number:
-                                                break
-                                    
-                                    # パターン5: 一般的な電話番号パターン（FAXの前後）
-                                    if not fax_number:
-                                        text_blocks = soup.find_all(string=re.compile(r'FAX|fax'))
-                                        for text in text_blocks:
-                                            # FAXの前後100文字を検索
-                                            context = text.parent.text
-                                            fax_index = context.upper().find('FAX')
-                                            if fax_index != -1:
-                                                # FAXの前後を検索
-                                                before = context[max(0, fax_index-100):fax_index]
-                                                after = context[fax_index:min(len(context), fax_index+100)]
-                                                # FAXの直後を優先的に検索
-                                                match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', after)
-                                                if not match:
-                                                    match = re.search(r'(\d[\d\-]+\d)[^\d]*FAX', before)
-                                                if match:
-                                                    fax_number = match.group(1)
-                                                    self.log_updated.emit("- パターン5でFAX番号を検出")
-                                                    break
-                                    
-                                    # パターン6: 「お問い合わせ」や「連絡先」セクション内のFAX番号
-                                    if not fax_number:
-                                        contact_sections = soup.find_all(['div', 'section'], class_=re.compile(r'contact|inquiry|access', re.I))
-                                        contact_sections.extend(soup.find_all(['div', 'section'], id=re.compile(r'contact|inquiry|access', re.I)))
-                                        for section in contact_sections:
-                                            text = section.text
-                                            match = re.search(r'FAX[^\d]*(\d[\d\-]+\d)', text)
-                                            if match:
-                                                fax_number = match.group(1)
-                                                self.log_updated.emit("- パターン6でFAX番号を検出")
-                                                break
-                                    
-                                    if fax_number:
-                                        # 番号の正規化（ハイフン統一のみ）
-                                        fax_number = re.sub(r'[^\d\-]', '', fax_number)
-                                        df.at[index, 'FAX番号'] = str(fax_number)  # 文字列として保存
-                                        df.at[index, 'エラー詳細'] = None  # エラーをクリア
-                                        self.log_updated.emit(f"- メインページでFAX番号が見つかりました: {fax_number}")
+                                                # 番号の正規化（ハイフン統一のみ）
+                                                fax_number = re.sub(r'[^\d\-]', '', fax_number)
+                                                df.at[index, 'FAX番号'] = str(fax_number)  # 文字列として保存
+                                                df.at[index, 'エラー詳細'] = None  # エラーをクリア
+                                                self.log_updated.emit(f"- メインページでFAX番号が見つかりました: {fax_number}")
+                                            else:
+                                                df.at[index, 'エラー詳細'] = "メインページでもFAX番号が見つかりませんでした"
+                                                self.log_updated.emit("- メインページでもFAX番号が見つかりませんでした")
+                                        
+                                        except requests.exceptions.RequestException as e:
+                                            self.log_updated.emit(f"- 詳細ページの取得に失敗しました: {str(e)}")
+                                            df.at[index, 'エラー詳細'] = f"詳細ページの取得に失敗: {str(e)}"
                                     else:
-                                        df.at[index, 'エラー詳細'] = "メインページでもFAX番号が見つかりませんでした"
-                                        self.log_updated.emit("- メインページでもFAX番号が見つかりませんでした")
-                            
+                                        df.at[index, 'エラー詳細'] = "詳細ページへのリンクが見つかりませんでした"
+                                        self.log_updated.emit("- 詳細ページへのリンクが見つかりませんでした")
+                                
                             except requests.exceptions.RequestException as e:
                                 self.log_updated.emit(f"- ページの取得に失敗しました: {str(e)}")
                                 df.at[index, 'エラー詳細'] = f"ページの取得に失敗: {str(e)}"
@@ -570,6 +591,11 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
         
+        # リフレッシュボタンを追加
+        self.refresh_button = QPushButton("リフレッシュ")
+        self.refresh_button.clicked.connect(self.refresh_scraping)
+        button_layout.addWidget(self.refresh_button)
+        
         button_layout.addStretch()
         
         close_button = QPushButton("閉じる")
@@ -682,6 +708,30 @@ class MainWindow(QMainWindow):
             
         # 親クラスのcloseEventを呼び出す
         super().closeEvent(event)
+
+    def refresh_scraping(self):
+        """処理が停止した場合に途中から再開する"""
+        if not self.file_path.text():
+            self.log("エラー: CSVファイルを選択してください")
+            return
+            
+        if self.worker and self.worker.isRunning():
+            self.log("すでに処理中です。リフレッシュする場合は先に中止してください。")
+            return
+            
+        self.log("リフレッシュを開始します。未処理の行から処理を再開します...")
+        self.worker = ScrapingWorker(self.file_path.text())
+        self.worker.progress_updated.connect(self.update_progress)
+        self.worker.log_updated.connect(self.log)
+        self.worker.finished.connect(self.scraping_finished)
+        self.worker.error_occurred.connect(self.handle_error)
+        
+        self.start_button.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.status_label.setText("処理を再開中...")
+        
+        self.worker.start()
 
 def main():
     try:
