@@ -65,6 +65,14 @@ def extract_fax_numbers(pdf_path, output_path=None):
         df = pd.DataFrame(fax_numbers)
         
         if len(df) > 0:
+            # FAX番号の重複チェック
+            original_count = len(df)
+            # 最初に出現した値を保持し、後に出現した重複を削除
+            df = df.drop_duplicates(subset=["fax_number"], keep="first")
+            duplicate_count = original_count - len(df)
+            if duplicate_count > 0:
+                print(f"{duplicate_count}件の重複するFAX番号を削除しました")
+            
             # CSVに保存
             df.to_csv(output_path, index=False, encoding="utf-8-sig")
             print(f"FAX番号を保存しました: {output_path}")
@@ -114,6 +122,9 @@ class ExtractWorker(QThread):
             result_path, num_found = extract_fax_numbers(self.pdf_path, self.output_path)
             
             if result_path:
+                # extract_fax_numbers関数内で重複削除が行われるため、ここでログに記録
+                self.log_updated.emit(f"重複するFAX番号は自動的に削除されました")
+                self.log_updated.emit(f"最終的に {num_found} 件のFAX番号が保存されました")
                 self.finished.emit(result_path, num_found)
             else:
                 self.error_occurred.emit("抽出処理に失敗しました")
