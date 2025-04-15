@@ -4,9 +4,9 @@
 このプロジェクトは、クリニックのFAX番号を自動的にスクレイピングして収集するためのツールです。PyQt5ベースのGUIアプリケーションとして実装されており、CSVファイルから読み込んだクリニック名のリストに対して、Google検索を行い、見つかったウェブサイトからFAX番号を抽出します。
 
 ## 主要ファイル
-- `fax_scraper_qt.py`: メインのGUIアプリケーション（PyQt5実装）
-- `tsurumiku_import_requests.py`: 鶴見区関連データのインポートスクリプト
-- `pdf_to_text.py`: PDFからテキストを抽出するツール
+- `fax_scraper_qt.py`: メインのGUIアプリケーション（PyQt5実装）まだ使えないです
+- `tsurumiku_import_requests.py`: 鶴見区関連データのインポートスクリプト。鶴見区医師会の検索結果から抽出する際に使いました
+- `pdf_to_text.py`: PDFからテキストを抽出するツール。厚生局のデータPDFをここにぶち込むといい。これが一番ちゃんと使える
 - `tsurumi-fax_numbers_with_area_code.csv`: サンプルデータまたは結果ファイル
 - `test_*.py`: 各種テストスクリプト
 
